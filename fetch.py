@@ -1,6 +1,6 @@
 # filter_events_excluding_tags.py
 import requests
-from typing import Iterable, List, Dict, Optional
+import json
 
 LIMIT, INCREMENT = 10, 100
 
@@ -33,7 +33,9 @@ def fetch_events(order_field="startDate", ascending=False, closed=False):
 
         offset += INCREMENT
 
-    print("Valid events fetched:")
+    print("Valid events fetched")
+    with open("events.json", "a") as f:
+        json.dump(result, f, indent=2)
     for event in result:
         print(event["title"])
         print(event["startDate"])
