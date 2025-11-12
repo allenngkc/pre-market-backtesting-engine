@@ -1,5 +1,5 @@
-from time import time
-from schema import DatabaseDao
+import time
+from data_fetcher.schema import DatabaseDao
 from py_clob_client.clob_types import TradeParams
 from py_clob_client.client import ClobClient
 from dotenv import load_dotenv
@@ -22,59 +22,47 @@ result = []
 databaseDao = DatabaseDao()
 
 def fetch_trades_for_market(condition_id):
+    """
+    Fetch all trades for a specific market (condition_id).
+    Handles pagination to retrieve all available trades.
+    """
     all_trades = []
-    current_time, limit = 0, 500
-
-    while True:
-        batch_trades, offset = [], 0
-
-        while offset <= 1000:
-            params = {
-                "market": [condition_id],
-                "limit": limit,
-                "offset": offset
-            }
-
-            if current_time > 0:
-                params["after"] = current_time
-
-            response = requests.get(TRADES_URL, params=params)
-            response.raise_for_status()
-
-            trades = response.json()
-            if not trades or len(trades) == 0: break
-
-            batch_trades.extend(trades)
-
-            for trade in trades:
-                databaseDao.insert_trade(trade)
-            
-            if len(trades) < limit: break
-
-            offset += limit
+    offset = 0
+    limit = 10000 # Maximum allowed per request
+    
+    while offset <= 10000:
+        params = {
+            "market": condition_id,
+            "limit": limit,
+            "offset": offset,
+            "filterType": "CASH",
+            "filterAmount": 100
+        }
         
-        if not batch_trades:
-            # No more trades found
+        response = requests.get(TRADES_URL, params=params)
+        response.raise_for_status()
+        trades = response.json()
+        
+        if not trades:
+            # No more trades to fetch
             break
-
-        all_trades.extend(batch_trades)
-        print(f"Fetched {len(batch_trades)} trades for market {condition_id} (total: {len(all_trades)})")
-
-        if len(batch_trades) >= 1500:
-            # Move time window forward to the timestamp of the last trade
-            last_trade_time = batch_trades[-1].get('timestamp', 0)
+        
+        # Store trades in database
+        for trade in trades:
+            databaseDao.insert_trade(trade)
+        
+        all_trades.extend(trades)
+        print(f"Fetched {len(trades)} trades for market {condition_id} (offset: {offset})")
+        if offset != 0:
+            print(f"Market {condition_id} has more than 10,000 trades; Offset: {offset}")
+        
+        offset += limit
+        
+        # Respect API rate limits - add a small delay if needed
+        time.sleep(0.1)
             
-            if last_trade_time <= current_time:
-                # Safety check - prevent infinite loop
-                print(f"Warning: No progress on time window for market {condition_id}")
-                break
-            
-            current_time = last_trade_time
-            print(f"Moving to next time window starting at {datetime.fromtimestamp(current_time)}")
-        else:
-            # We got fewer than 1500, meaning we've fetched all trades
-            break
-
+    print(f"Total {len(all_trades)} trades fetched for market {condition_id}")
+    return all_trades
 
 def fetch_and_store(LIMIT, INCREMENT):
     valid, offset = 0, 0
@@ -94,7 +82,7 @@ def fetch_and_store(LIMIT, INCREMENT):
         event_data = event_response.json()
         for event in event_data:
             event_title = event.get("title", "")
-            if "Up or Down" in event_title or "above" in event_title or event.get("volume", 0) < 5000:
+            if "Up or Down" in event_title or "above" in event_title or "price" in event_title or event.get("volume", 0) < 5000:
                 continue
             
             databaseDao.insert_event(event)
@@ -151,4 +139,4 @@ def fetch_events(order_field="startDate", ascending=False, closed=False, LIMIT=1
 
 
 databaseDao.create_database()
-fetch_and_store(1000, 200)
+fetch_and_store(5000, 200)
